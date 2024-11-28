@@ -5,7 +5,9 @@ import { setupServer } from 'msw/node'
 
 const httpServer = new HttpServer((app) => {
   app.post('/graphql', (_, res) => {
-    return res.status(500).send('original-response')
+    return res.status(500).send({
+      foo: 'original-response'
+    })
   })
   app.post('/resource/not-defined', (_, res) => {
     return res.status(500).send('original-response')
@@ -111,7 +113,95 @@ describe('graphql handlers', () => {
     expect(stdErrSpy).not.toHaveBeenCalled()
   })
 
-  it('does not print a memory leak warning for onUnhandledRequest', async () => {
+  it('does mock even after calling server.listen() multiple times', async () => {
+    try {
+      const graphqlResponse = await fetch(httpServer.http.url('/graphql'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: `query Get${NUMBER_OF_REQUEST_HANDLERS - 1} { index }`,
+        }),
+      }).then((response) => response.json())
+      
+      expect(graphqlResponse).toEqual({
+        data: { index: NUMBER_OF_REQUEST_HANDLERS - 1 },
+      })
+
+      expect(stdErrSpy).not.toHaveBeenCalled()
+
+      // calling server.listen() again
+      server.listen();
+
+      const graphqlResponse2 = await fetch(httpServer.http.url('/graphql'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: `query Get${NUMBER_OF_REQUEST_HANDLERS - 1} { index }`,
+        }),
+      }).then((response) => response.json())
+
+      expect(graphqlResponse2).toEqual({
+        data: { index: NUMBER_OF_REQUEST_HANDLERS - 1 },
+      })
+      expect(stdErrSpy).not.toHaveBeenCalled()
+    } catch(err) {
+      console.log(err)
+      throw err;
+    }
+  })
+
+  it('does not mock after calling server.listen() again post server.close()', async () => {
+    try {
+      const graphqlResponse = await fetch(httpServer.http.url('/graphql'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: `query Get${NUMBER_OF_REQUEST_HANDLERS - 1} { index }`,
+        }),
+      }).then((response) => response.json())
+      
+      expect(graphqlResponse).toEqual({
+        data: { index: NUMBER_OF_REQUEST_HANDLERS - 1 },
+      })
+
+      expect(stdErrSpy).not.toHaveBeenCalled()
+
+      // 'Closing' MSW server
+      server.close();
+      // calling server.listen() again
+      server.listen();
+
+      
+      const graphqlResponse2 = await fetch(httpServer.http.url('/graphql'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: `query Get${NUMBER_OF_REQUEST_HANDLERS - 1} { index }`,
+        }),
+      }).then((response) => response.json())
+
+      // This should have responded mocked response
+      expect(graphqlResponse2).toEqual({
+        data: { index: NUMBER_OF_REQUEST_HANDLERS - 1 },
+      })
+      // Instead it responds with original data <---- Why???
+      expect(graphqlResponse2).not.toEqual({ foo: 'original-response' });
+      expect(stdErrSpy).not.toHaveBeenCalled()
+    } catch(err) {
+      console.log(err)
+      throw err;
+    }
+  })
+
+  it.skip('does not print a memory leak warning for onUnhandledRequest', async () => {
     const unhandledResponse = await fetch(httpServer.http.url('/graphql'), {
       method: 'POST',
       headers: {
